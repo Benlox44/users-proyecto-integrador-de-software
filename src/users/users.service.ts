@@ -1,0 +1,122 @@
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './user.entity';
+import { Cart } from './cart.entity';
+import * as jwt from 'jsonwebtoken';
+import * as amqp from 'amqplib/callback_api';
+
+@Injectable()
+export class UsersService {
+  constructor(
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @InjectRepository(Cart)
+    private cartRepository: Repository<Cart>,
+  ) {}
+
+  async register(name: string, email: string, password: string) {
+    const existingUser = await this.userRepository.findOne({ where: { email } });
+    if (existingUser) {
+      throw new HttpException('El correo ya está en uso', HttpStatus.CONFLICT);
+    }
+
+    const newUser = this.userRepository.create({ name, email, password });
+    await this.userRepository.save(newUser);
+
+    const token = jwt.sign({ id: newUser.id }, 'your_secret_key', { expiresIn: '1h' });
+    return { token, id: newUser.id, email: newUser.email, name: newUser.name };
+  }
+
+  async login(email: string, password: string) {
+    const user = await this.userRepository.findOne({ where: { email } });
+    if (!user || user.password !== password) {
+      throw new Error('Credenciales incorrectas');
+    }
+
+    const token = jwt.sign({ id: user.id }, 'your_secret_key', { expiresIn: '1h' });
+    return { token, id: user.id, email: user.email, name: user.name };
+  }
+
+  async addToCart(userId: number, courseId: number) {
+    const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: courseId } });
+    if (existingEntry) {
+      throw new HttpException('El curso ya está en el carrito', HttpStatus.CONFLICT);
+    }
+
+    const cartEntry = this.cartRepository.create({ user_id: userId, course_id: courseId });
+    await this.cartRepository.save(cartEntry);
+  }
+
+  async removeFromCart(userId: number, courseId: number) {
+    await this.cartRepository.delete({ user_id: userId, course_id: courseId });
+  }
+
+  async getCart(userId: number) {
+    const cartItems = await this.cartRepository.find({ where: { user_id: userId } });
+    const courseIds = cartItems.map(item => item.course_id);
+
+    // Llamada a RabbitMQ para obtener los detalles de los cursos
+    const courseDetails = await this.requestCourseDetails(courseIds);
+    return { cart: courseDetails };
+  }
+
+  private async requestCourseDetails(courseIds: number[]): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      amqp.connect('amqp://localhost', (error0, connection) => {
+        if (error0) {
+          reject(error0);
+          return;
+        }
+
+        connection.createChannel((error1, channel) => {
+          if (error1) {
+            reject(error1);
+            return;
+          }
+
+          const queue = 'course_queue';
+          const correlationId = this.generateUuid();
+
+          channel.assertQueue('', { exclusive: true }, (error2, q) => {
+            if (error2) {
+              reject(error2);
+              return;
+            }
+
+            channel.consume(q.queue, (msg) => {
+              if (msg.properties.correlationId === correlationId) {
+                const courses = JSON.parse(msg.content.toString());
+                resolve(courses);
+                setTimeout(() => {
+                  connection.close();
+                }, 500);
+              }
+            }, { noAck: true });
+
+            channel.sendToQueue(queue, Buffer.from(JSON.stringify({ courseIds })), {
+              correlationId,
+              replyTo: q.queue,
+            });
+          });
+        });
+      });
+    });
+  }
+
+  private generateUuid() {
+    return Math.random().toString() + Math.random().toString() + Math.random().toString();
+  }
+
+  // Este es el método que faltaba en tu código original
+  async syncCart(userId: number, courses: { id: number }[]) {
+    for (const course of courses) {
+      const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: course.id } });
+      if (!existingEntry) {
+        const cartEntry = this.cartRepository.create({ user_id: userId, course_id: course.id });
+        await this.cartRepository.save(cartEntry);
+      }
+    }
+    return { message: 'Carrito sincronizado correctamente' };
+  }
+}
