@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
@@ -7,13 +7,59 @@ import * as jwt from 'jsonwebtoken';
 import * as amqp from 'amqplib/callback_api';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
     @InjectRepository(Cart)
     private cartRepository: Repository<Cart>,
   ) {}
+
+  async onModuleInit() {
+    this.listenForUserDetailsRequest();
+  }
+
+  private listenForUserDetailsRequest() {
+    amqp.connect('amqp://localhost', (error0, connection) => {
+      if (error0) {
+        throw error0;
+      }
+
+      connection.createChannel((error1, channel) => {
+        if (error1) {
+          throw error1;
+        }
+
+        const queue = 'user_details_queue';
+
+        channel.assertQueue(queue, { durable: false });
+
+        channel.consume(queue, async (msg) => {
+          if (!msg) return;
+
+          const { userId } = JSON.parse(msg.content.toString());
+
+          try {
+            const user = await this.userRepository.findOne({ where: { id: userId } });
+
+            if (user) {
+              const response = { email: user.email, name: user.name };
+              const responseQueue = msg.properties.replyTo;
+              const correlationId = msg.properties.correlationId;
+
+              channel.sendToQueue(responseQueue, Buffer.from(JSON.stringify(response)), {
+                correlationId,
+              });
+            }
+          } catch (error) {
+            console.error('Error al obtener los detalles del usuario:', error);
+          }
+
+          channel.ack(msg);
+        });
+      });
+    });
+  }
 
   async register(name: string, email: string, password: string) {
     const existingUser = await this.userRepository.findOne({ where: { email } });
