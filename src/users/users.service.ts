@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
 import { Cart } from './cart.entity';
+import { Owned } from './owned.entity';
 import * as jwt from 'jsonwebtoken';
 import * as amqp from 'amqplib/callback_api';
 
@@ -13,10 +14,28 @@ export class UsersService implements OnModuleInit {
     private userRepository: Repository<User>,
     @InjectRepository(Cart)
     private cartRepository: Repository<Cart>,
+    @InjectRepository(Owned)
+    private ownedRepository: Repository<Owned>,
   ) {}
 
   async onModuleInit() {
     this.listenForUserDetailsRequest();
+  }
+
+  async addToOwned(userId: number, courseId: number) {
+    const existingEntry = await this.ownedRepository.findOne({ where: { user_id: userId, course_id: courseId } });
+    if (existingEntry) {
+      throw new HttpException('El curso ya ha sido comprado', HttpStatus.CONFLICT);
+    }
+
+    const ownedEntry = this.ownedRepository.create({ user_id: userId, course_id: courseId });
+    await this.ownedRepository.save(ownedEntry);
+  }
+
+  async getOwnedCourses(userId: number) {
+    const ownedCourses = await this.ownedRepository.find({ where: { user_id: userId } });
+    const courseIds = ownedCourses.map(item => item.course_id);
+    return { owned: courseIds };
   }
 
   private listenForUserDetailsRequest() {

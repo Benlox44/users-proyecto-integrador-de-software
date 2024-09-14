@@ -11,7 +11,6 @@ export class UsersController {
       const { email, password } = body;
       return await this.usersService.login(email, password);
     } catch (error) {
-      // Aquí lanzamos un error con el estado 401
       throw new HttpException('Credenciales incorrectas', HttpStatus.UNAUTHORIZED);
     }
   }
