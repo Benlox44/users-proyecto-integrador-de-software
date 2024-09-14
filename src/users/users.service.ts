@@ -20,6 +20,7 @@ export class UsersService implements OnModuleInit {
 
   async onModuleInit() {
     this.listenForUserDetailsRequest();
+    this.listenForPurchaseConfirmation();
   }
 
   async addToOwned(userId: number, courseId: number) {
@@ -37,6 +38,46 @@ export class UsersService implements OnModuleInit {
     const courseIds = ownedCourses.map(item => item.course_id);
     return { owned: courseIds };
   }
+
+  private listenForPurchaseConfirmation() {
+    amqp.connect('amqp://localhost', (error0, connection) => {
+      if (error0) {
+        throw error0;
+      }
+  
+      connection.createChannel((error1, channel) => {
+        if (error1) {
+          throw error1;
+        }
+  
+        const queue = 'purchase_to_user_queue';
+  
+        channel.assertQueue(queue, { durable: true });
+  
+        channel.consume(queue, async (msg) => {
+          if (msg) {
+            const { userId, courseIds } = JSON.parse(msg.content.toString());
+            console.log('Recibido mensaje de compra:', { userId, courseIds });
+  
+            try {
+              for (const courseId of courseIds) {
+                await this.ownedRepository.save({ user_id: userId, course_id: courseId });
+              }
+  
+              await this.cartRepository.delete({ user_id: userId });
+  
+              console.log(`Carrito para el usuario ${userId} ha sido eliminado.`);
+            } catch (error) {
+              console.error('Error al guardar la compra en la base de datos:', error);
+            }
+  
+            channel.ack(msg);
+          }
+        });
+      });
+    });
+  }
+  
 
   private listenForUserDetailsRequest() {
     amqp.connect('amqp://localhost', (error0, connection) => {
