@@ -39,4 +39,14 @@ export class UsersController {
   async syncCart(@Body() body) {
     return this.usersService.syncCart(body.userId, body.courses);
   }
+
+  @Post('add-to-owned')
+  async addToOwned(@Body() body) {
+    return this.usersService.addToOwned(body.userId, body.courseId);
+  }
+
+  @Get('owned/:userId')
+  async getOwnedCourses(@Param('userId') userId: number) {
+    return this.usersService.getOwnedCourses(userId);
+  }
 }
