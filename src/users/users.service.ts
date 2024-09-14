@@ -43,7 +43,10 @@ export class UsersService implements OnModuleInit {
             const user = await this.userRepository.findOne({ where: { id: userId } });
 
             if (user) {
-              const response = { email: user.email, name: user.name };
+              const cartItems = await this.cartRepository.find({ where: { user_id: userId } });
+              const courseIds = cartItems.map(item => item.course_id);
+
+              const response = { email: user.email, name: user.name, courseIds };
               const responseQueue = msg.properties.replyTo;
               const correlationId = msg.properties.correlationId;
 
@@ -102,7 +105,6 @@ export class UsersService implements OnModuleInit {
     const cartItems = await this.cartRepository.find({ where: { user_id: userId } });
     const courseIds = cartItems.map(item => item.course_id);
 
-    // Llamada a RabbitMQ para obtener los detalles de los cursos
     const courseDetails = await this.requestCourseDetails(courseIds);
     return { cart: courseDetails };
   }
@@ -130,15 +132,19 @@ export class UsersService implements OnModuleInit {
               return;
             }
 
-            channel.consume(q.queue, (msg) => {
-              if (msg.properties.correlationId === correlationId) {
-                const courses = JSON.parse(msg.content.toString());
-                resolve(courses);
-                setTimeout(() => {
-                  connection.close();
-                }, 500);
-              }
-            }, { noAck: true });
+            channel.consume(
+              q.queue,
+              (msg) => {
+                if (msg.properties.correlationId === correlationId) {
+                  const courses = JSON.parse(msg.content.toString());
+                  resolve(courses);
+                  setTimeout(() => {
+                    connection.close();
+                  }, 500);
+                }
+              },
+              { noAck: true },
+            );
 
             channel.sendToQueue(queue, Buffer.from(JSON.stringify({ courseIds })), {
               correlationId,
@@ -154,7 +160,6 @@ export class UsersService implements OnModuleInit {
     return Math.random().toString() + Math.random().toString() + Math.random().toString();
   }
 
-  // Este es el método que faltaba en tu código original
   async syncCart(userId: number, courses: { id: number }[]) {
     for (const course of courses) {
       const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: course.id } });
