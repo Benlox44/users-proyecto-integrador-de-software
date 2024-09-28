@@ -220,8 +220,16 @@ export class UsersService implements OnModuleInit {
   async addToCart(userId: number, courseId: number) {
     try {
       console.log(`Añadiendo curso con ID ${courseId} al carrito del usuario ${userId}`);
-      const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: courseId } });
-      if (existingEntry) {
+  
+      // Verificar si el curso ya ha sido comprado
+      const ownedCourse = await this.ownedRepository.findOne({ where: { user_id: userId, course_id: courseId } });
+      if (ownedCourse) {
+        throw new HttpException('El curso ya está en tu posesión', HttpStatus.CONFLICT);
+      }
+  
+      // Verificar si el curso ya está en el carrito
+      const existingCartEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: courseId } });
+      if (existingCartEntry) {
         throw new HttpException('El curso ya está en el carrito', HttpStatus.CONFLICT);
       }
   
@@ -230,7 +238,7 @@ export class UsersService implements OnModuleInit {
       console.log('Curso añadido al carrito correctamente.');
     } catch (error) {
       console.error('Error al añadir curso al carrito:', error);
-      throw new HttpException('Error al añadir curso al carrito', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw error instanceof HttpException ? error : new HttpException('Error al añadir curso al carrito', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }  
 
