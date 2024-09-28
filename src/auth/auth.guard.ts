@@ -13,27 +13,32 @@ export class AuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     const token = this.extractTokenFromHeader(request);
-    
+
     if (!token) {
       console.error('No se proporcionó el token');
       throw new HttpException('No se proporcionó el token', HttpStatus.UNAUTHORIZED);
     }
-  
+
     try {
       const secret = this.configService.get<string>('JWT_SECRET');
       console.log('JWT_SECRET utilizado para verificar:', secret);
       const payload = this.jwtService.verify(token, { secret });
       request['user'] = payload;
     } catch (error) {
-      console.error('Error al verificar el token en AuthGuard:', error);
-      throw new HttpException('Token inválido o expirado', HttpStatus.UNAUTHORIZED);
+      if (error.name === 'TokenExpiredError') {
+        console.error('Error al verificar el token: sesión expirada');
+        throw new HttpException('Sesión expirada, por favor inicie sesión nuevamente', HttpStatus.UNAUTHORIZED);
+      } else {
+        console.error('Error al verificar el token en AuthGuard:', error);
+        throw new HttpException('Token inválido o expirado', HttpStatus.UNAUTHORIZED);
+      }
     }
-  
+
     return true;
-  }  
+  }
 
   private extractTokenFromHeader(request: Request): string | undefined {
     const [type, token] = request.headers.authorization?.split(' ') ?? [];
     return type === 'Bearer' ? token : undefined;
-  }  
+  }
 }
