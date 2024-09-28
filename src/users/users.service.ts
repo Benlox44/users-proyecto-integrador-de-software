@@ -149,35 +149,73 @@ export class UsersService implements OnModuleInit {
     if (existingUser) {
       throw new HttpException('El correo ya está en uso', HttpStatus.CONFLICT);
     }
-
+  
     const newUser = this.userRepository.create({ name, email, password });
     await this.userRepository.save(newUser);
-
+  
     const token = jwt.sign({ id: newUser.id }, 'your_secret_key', { expiresIn: '1h' });
-    return { token, email: newUser.email, name: newUser.name };
+    return { token };
   }
-
+  
   async login(email: string, password: string) {
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user || user.password !== password) {
-      throw new Error('Credenciales incorrectas');
+      throw new HttpException('Credenciales incorrectas', HttpStatus.UNAUTHORIZED);
     }
-
+  
     const token = jwt.sign({ id: user.id }, 'your_secret_key', { expiresIn: '1h' });
-    return { token, email: user.email, name: user.name };
-  }
+    return { token };
+  }  
 
   async getProfile(userId: number) {
+    console.log(`Intentando obtener el perfil del usuario con ID: ${userId}`);
+    
+    try {
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      
+      if (!user) {
+        console.log(`Usuario con ID ${userId} no encontrado`);
+        throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
+      }
+      
+      console.log(`Perfil encontrado para el usuario con ID ${userId}: Nombre: ${user.name}, Email: ${user.email}`);
+      
+      return {
+        name: user.name,
+        email: user.email,
+      };
+    } catch (error) {
+      console.error(`Error al obtener el perfil del usuario con ID ${userId}:`, error.message);
+      throw error;
+    }
+  }  
+
+  async updateProfile(userId: number, newName: string, newEmail: string, password: string) {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
     }
-
+  
+    // Verificar si el nuevo correo ya está en uso por otro usuario
+    if (newEmail !== user.email) {
+      const emailInUse = await this.userRepository.findOne({ where: { email: newEmail } });
+      if (emailInUse) {
+        throw new HttpException('El correo ya está en uso', HttpStatus.CONFLICT);
+      }
+    }
+  
+    user.name = newName;
+    user.email = newEmail;
+    if (password) {
+      user.password = password;
+    }
+  
+    await this.userRepository.save(user);
     return {
       name: user.name,
       email: user.email,
     };
-  }
+  }  
 
   async addToCart(userId: number, courseId: number) {
     try {

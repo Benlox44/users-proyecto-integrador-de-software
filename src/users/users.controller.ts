@@ -25,7 +25,25 @@ export class UsersController {
   @Get('profile')
   async getProfile(@Request() req) {
     const userId = req.user.id;
-    return this.usersService.getProfile(userId);
+    
+    console.log(`Solicitud recibida para obtener el perfil del usuario con ID: ${userId}`);
+    
+    try {
+      const userProfile = await this.usersService.getProfile(userId);
+      console.log(`Perfil del usuario con ID ${userId} enviado correctamente.`);
+      return userProfile;
+    } catch (error) {
+      console.error(`Error en el controlador al obtener el perfil del usuario con ID ${userId}:`, error.message);
+      throw new HttpException(error.message, error.status || HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('updateProfile')
+  async updateProfile(@Request() req, @Body() body) {
+    const userId = req.user.id;
+    const { name, newEmail, password } = body;
+    return this.usersService.updateProfile(userId, name, newEmail, password);
   }
 
   @UseGuards(AuthGuard)
