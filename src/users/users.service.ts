@@ -23,7 +23,17 @@ export class UsersService implements OnModuleInit {
     this.listenForPurchaseConfirmation();
   }
 
-  async addToOwned(userId: number, courseId: number) {
+  private extractUserIdFromToken(token: string): number {
+    try {
+      const decoded: any = jwt.verify(token, 'your_secret_key');
+      return decoded.id;
+    } catch (error) {
+      throw new HttpException('Token inválido', HttpStatus.UNAUTHORIZED);
+    }
+  }
+
+  async addToOwned(token: string, courseId: number) {
+    const userId = this.extractUserIdFromToken(token);
     const existingEntry = await this.ownedRepository.findOne({ where: { user_id: userId, course_id: courseId } });
     if (existingEntry) {
       throw new HttpException('El curso ya ha sido comprado', HttpStatus.CONFLICT);
@@ -33,11 +43,21 @@ export class UsersService implements OnModuleInit {
     await this.ownedRepository.save(ownedEntry);
   }
 
-  async getOwnedCourses(userId: number) {
+  async getOwnedCourses(token: string) {
+    const userId = this.extractUserIdFromToken(token);
+    console.log(`Obteniendo cursos comprados para el usuario con ID: ${userId}`);
+  
     const ownedCourses = await this.ownedRepository.find({ where: { user_id: userId } });
+    
+    if (!ownedCourses || ownedCourses.length === 0) {
+      console.log(`No se encontraron cursos comprados para el usuario con ID: ${userId}`);
+    } else {
+      console.log(`Cursos comprados encontrados para el usuario con ID ${userId}:`, ownedCourses);
+    }
+  
     const courseIds = ownedCourses.map(item => item.course_id);
     return { owned: courseIds };
-  }
+  }  
 
   private listenForPurchaseConfirmation() {
     amqp.connect('amqp://localhost', (error0, connection) => {
@@ -134,7 +154,7 @@ export class UsersService implements OnModuleInit {
     await this.userRepository.save(newUser);
 
     const token = jwt.sign({ id: newUser.id }, 'your_secret_key', { expiresIn: '1h' });
-    return { token, id: newUser.id, email: newUser.email, name: newUser.name };
+    return { token, email: newUser.email, name: newUser.name };
   }
 
   async login(email: string, password: string) {
@@ -144,30 +164,76 @@ export class UsersService implements OnModuleInit {
     }
 
     const token = jwt.sign({ id: user.id }, 'your_secret_key', { expiresIn: '1h' });
-    return { token, id: user.id, email: user.email, name: user.name };
+    return { token, email: user.email, name: user.name };
+  }
+
+  async getProfile(userId: number) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
+    }
+
+    return {
+      name: user.name,
+      email: user.email,
+    };
   }
 
   async addToCart(userId: number, courseId: number) {
-    const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: courseId } });
-    if (existingEntry) {
-      throw new HttpException('El curso ya está en el carrito', HttpStatus.CONFLICT);
+    try {
+      console.log(`Añadiendo curso con ID ${courseId} al carrito del usuario ${userId}`);
+      const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: courseId } });
+      if (existingEntry) {
+        throw new HttpException('El curso ya está en el carrito', HttpStatus.CONFLICT);
+      }
+  
+      const cartEntry = this.cartRepository.create({ user_id: userId, course_id: courseId });
+      await this.cartRepository.save(cartEntry);
+      console.log('Curso añadido al carrito correctamente.');
+    } catch (error) {
+      console.error('Error al añadir curso al carrito:', error);
+      throw new HttpException('Error al añadir curso al carrito', HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }  
 
-    const cartEntry = this.cartRepository.create({ user_id: userId, course_id: courseId });
-    await this.cartRepository.save(cartEntry);
-  }
-
-  async removeFromCart(userId: number, courseId: number) {
-    await this.cartRepository.delete({ user_id: userId, course_id: courseId });
-  }
+  async removeFromCart(token: string, courseId: number) {
+    const userId = this.extractUserIdFromToken(token);
+    console.log(`Intentando eliminar el curso con ID ${courseId} del carrito del usuario con ID ${userId}`);
+  
+    const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: courseId } });
+    
+    if (!existingEntry) {
+      console.log(`Curso con ID ${courseId} no encontrado en el carrito del usuario con ID ${userId}`);
+      throw new HttpException('El curso no está en el carrito', HttpStatus.NOT_FOUND);
+    }
+  
+    try {
+      await this.cartRepository.delete({ user_id: userId, course_id: courseId });
+      console.log(`Curso con ID ${courseId} eliminado del carrito del usuario con ID ${userId} con éxito.`);
+    } catch (error) {
+      console.error(`Error al eliminar el curso con ID ${courseId} del carrito del usuario con ID ${userId}:`, error);
+      throw new HttpException('Error al eliminar el curso del carrito', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }  
 
   async getCart(userId: number) {
-    const cartItems = await this.cartRepository.find({ where: { user_id: userId } });
-    const courseIds = cartItems.map(item => item.course_id);
-
-    const courseDetails = await this.requestCourseDetails(courseIds);
-    return { cart: courseDetails };
-  }
+    console.log(`Obteniendo carrito para el usuario con ID: ${userId}`);
+    try {
+      const cartItems = await this.cartRepository.find({ where: { user_id: userId } });
+      console.log(`Items en el carrito del usuario ${userId}:`, cartItems);
+  
+      if (!cartItems) {
+        throw new HttpException('No se encontraron items en el carrito', HttpStatus.NOT_FOUND);
+      }
+  
+      const courseIds = cartItems.map(item => item.course_id);
+      const courseDetails = await this.requestCourseDetails(courseIds);
+      return { cart: courseDetails };
+    } catch (error) {
+      console.error('Error al obtener el carrito del usuario:', error);
+      throw new HttpException('Error al obtener el carrito', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }  
 
   private async requestCourseDetails(courseIds: number[]): Promise<any[]> {
     return new Promise((resolve, reject) => {
@@ -220,7 +286,8 @@ export class UsersService implements OnModuleInit {
     return Math.random().toString() + Math.random().toString() + Math.random().toString();
   }
 
-  async syncCart(userId: number, courses: { id: number }[]) {
+  async syncCart(token: string, courses: { id: number }[]) {
+    const userId = this.extractUserIdFromToken(token);
     for (const course of courses) {
       const existingEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: course.id } });
       if (!existingEntry) {
