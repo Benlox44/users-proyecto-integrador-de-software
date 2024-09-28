@@ -6,6 +6,7 @@ import { Cart } from './cart.entity';
 import { Owned } from './owned.entity';
 import * as jwt from 'jsonwebtoken';
 import * as amqp from 'amqplib/callback_api';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -16,6 +17,7 @@ export class UsersService implements OnModuleInit {
     private cartRepository: Repository<Cart>,
     @InjectRepository(Owned)
     private ownedRepository: Repository<Owned>,
+    private configService: ConfigService,
   ) {}
 
   async onModuleInit() {
@@ -25,7 +27,8 @@ export class UsersService implements OnModuleInit {
 
   private extractUserIdFromToken(token: string): number {
     try {
-      const decoded: any = jwt.verify(token, 'your_secret_key');
+      const secret = this.configService.get<string>('JWT_SECRET');
+      const decoded: any = jwt.verify(token, secret);
       return decoded.id;
     } catch (error) {
       throw new HttpException('Token inválido', HttpStatus.UNAUTHORIZED);
@@ -46,58 +49,57 @@ export class UsersService implements OnModuleInit {
   async getOwnedCourses(token: string) {
     const userId = this.extractUserIdFromToken(token);
     console.log(`Obteniendo cursos comprados para el usuario con ID: ${userId}`);
-  
+
     const ownedCourses = await this.ownedRepository.find({ where: { user_id: userId } });
-    
+
     if (!ownedCourses || ownedCourses.length === 0) {
       console.log(`No se encontraron cursos comprados para el usuario con ID: ${userId}`);
     } else {
       console.log(`Cursos comprados encontrados para el usuario con ID ${userId}:`, ownedCourses);
     }
-  
+
     const courseIds = ownedCourses.map(item => item.course_id);
     return { owned: courseIds };
-  }  
+  }
 
   private listenForPurchaseConfirmation() {
     amqp.connect('amqp://localhost', (error0, connection) => {
       if (error0) {
         throw error0;
       }
-  
+
       connection.createChannel((error1, channel) => {
         if (error1) {
           throw error1;
         }
-  
+
         const queue = 'purchase_to_user_queue';
-  
+
         channel.assertQueue(queue, { durable: true });
-  
+
         channel.consume(queue, async (msg) => {
           if (msg) {
             const { userId, courseIds } = JSON.parse(msg.content.toString());
             console.log('Recibido mensaje de compra:', { userId, courseIds });
-  
+
             try {
               for (const courseId of courseIds) {
                 await this.ownedRepository.save({ user_id: userId, course_id: courseId });
               }
-  
+
               await this.cartRepository.delete({ user_id: userId });
-  
+
               console.log(`Carrito para el usuario ${userId} ha sido eliminado.`);
             } catch (error) {
               console.error('Error al guardar la compra en la base de datos:', error);
             }
-  
+
             channel.ack(msg);
           }
         });
       });
     });
   }
-  
 
   private listenForUserDetailsRequest() {
     amqp.connect('amqp://localhost', (error0, connection) => {
@@ -149,37 +151,40 @@ export class UsersService implements OnModuleInit {
     if (existingUser) {
       throw new HttpException('El correo ya está en uso', HttpStatus.CONFLICT);
     }
-  
+
     const newUser = this.userRepository.create({ name, email, password });
     await this.userRepository.save(newUser);
-  
-    const token = jwt.sign({ id: newUser.id }, 'your_secret_key', { expiresIn: '1h' });
+
+    const secret = this.configService.get<string>('JWT_SECRET');
+    const token = jwt.sign({ id: newUser.id }, secret, { expiresIn: '1h' });
     return { token };
   }
-  
+
   async login(email: string, password: string) {
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user || user.password !== password) {
       throw new HttpException('Credenciales incorrectas', HttpStatus.UNAUTHORIZED);
     }
-  
-    const token = jwt.sign({ id: user.id }, 'your_secret_key', { expiresIn: '1h' });
+
+    const secret = this.configService.get<string>('JWT_SECRET');
+    const token = jwt.sign({ id: user.id }, secret, { expiresIn: '1h' });
+    console.log('Token firmado:', token);
     return { token };
-  }  
+  }
 
   async getProfile(userId: number) {
     console.log(`Intentando obtener el perfil del usuario con ID: ${userId}`);
-    
+
     try {
       const user = await this.userRepository.findOne({ where: { id: userId } });
-      
+
       if (!user) {
         console.log(`Usuario con ID ${userId} no encontrado`);
         throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
       }
-      
+
       console.log(`Perfil encontrado para el usuario con ID ${userId}: Nombre: ${user.name}, Email: ${user.email}`);
-      
+
       return {
         name: user.name,
         email: user.email,
@@ -188,51 +193,50 @@ export class UsersService implements OnModuleInit {
       console.error(`Error al obtener el perfil del usuario con ID ${userId}:`, error.message);
       throw error;
     }
-  }  
+  }
 
   async updateProfile(userId: number, newName: string, newEmail: string, password: string) {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
     }
-  
-    // Verificar si el nuevo correo ya está en uso por otro usuario
+
     if (newEmail !== user.email) {
       const emailInUse = await this.userRepository.findOne({ where: { email: newEmail } });
       if (emailInUse) {
         throw new HttpException('El correo ya está en uso', HttpStatus.CONFLICT);
       }
     }
-  
+
     user.name = newName;
     user.email = newEmail;
     if (password) {
       user.password = password;
     }
-  
+
     await this.userRepository.save(user);
     return {
       name: user.name,
       email: user.email,
     };
-  }  
+  }
 
   async addToCart(userId: number, courseId: number) {
     try {
       console.log(`Añadiendo curso con ID ${courseId} al carrito del usuario ${userId}`);
-  
+
       // Verificar si el curso ya ha sido comprado
       const ownedCourse = await this.ownedRepository.findOne({ where: { user_id: userId, course_id: courseId } });
       if (ownedCourse) {
         throw new HttpException('El curso ya está en tu posesión', HttpStatus.CONFLICT);
       }
-  
+
       // Verificar si el curso ya está en el carrito
       const existingCartEntry = await this.cartRepository.findOne({ where: { user_id: userId, course_id: courseId } });
       if (existingCartEntry) {
         throw new HttpException('El curso ya está en el carrito', HttpStatus.CONFLICT);
       }
-  
+
       const cartEntry = this.cartRepository.create({ user_id: userId, course_id: courseId });
       await this.cartRepository.save(cartEntry);
       console.log('Curso añadido al carrito correctamente.');
