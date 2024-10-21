@@ -7,6 +7,7 @@ import { Owned } from './owned.entity';
 import * as jwt from 'jsonwebtoken';
 import * as amqp from 'amqplib/callback_api';
 import { ConfigService } from '@nestjs/config';
+import * as bcryptjs from "bcryptjs";
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -151,8 +152,9 @@ export class UsersService implements OnModuleInit {
     if (existingUser) {
       throw new HttpException('El correo ya está en uso', HttpStatus.CONFLICT);
     }
+    const hashPass = await bcryptjs.hash(password, 10);
 
-    const newUser = this.userRepository.create({ name, email, password });
+    const newUser = this.userRepository.create({ name, email, password:hashPass });
     await this.userRepository.save(newUser);
 
     const secret = this.configService.get<string>('JWT_SECRET');
@@ -162,7 +164,7 @@ export class UsersService implements OnModuleInit {
 
   async login(email: string, password: string) {
     const user = await this.userRepository.findOne({ where: { email } });
-    if (!user || user.password !== password) {
+    if (!user || !(await bcryptjs.compare(password, user.password))) {
       throw new HttpException('Credenciales incorrectas', HttpStatus.UNAUTHORIZED);
     }
 
