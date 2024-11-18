@@ -103,4 +103,24 @@ async removeFromCart(@Request() req, @Body() body) {
       throw new HttpException(error.message, error.status || HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
+
+  @Post('requestPassword')
+  async requestPasswordReset(@Body('email') email: string) {
+    try {
+      await this.usersService.requestPasswordReset(email);
+      return { message: 'Se ha enviado un enlace para restablecer la contraseña a su correo electrónico.' };
+    } catch (error) {
+      throw new HttpException(error.message, error.status || HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @Post('resetPassword')
+  async resetPassword(@Body() body: { token: string; newPassword: string }) {
+    try {
+      await this.usersService.resetPassword(body.token, body.newPassword);
+      return { message: 'Contraseña restablecida exitosamente.' };
+    } catch (error) {
+      throw new HttpException(error.message, error.status || HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
 }

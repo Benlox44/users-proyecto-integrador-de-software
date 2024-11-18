@@ -8,6 +8,7 @@ import * as jwt from 'jsonwebtoken';
 import * as amqp from 'amqplib/callback_api';
 import { ConfigService } from '@nestjs/config';
 import * as bcryptjs from "bcryptjs";
+import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -213,7 +214,8 @@ export class UsersService implements OnModuleInit {
     user.name = newName;
     user.email = newEmail;
     if (password) {
-      user.password = password;
+      const hashPass = await bcryptjs.hash(password, 10);
+      user.password = hashPass;
     }
 
     await this.userRepository.save(user);
@@ -349,4 +351,63 @@ export class UsersService implements OnModuleInit {
     }
     return { message: 'Carrito sincronizado correctamente' };
   }
+
+  async requestPasswordReset(email: string): Promise<void> {
+
+    const user = await this.userRepository.findOne({ where: { email } });
+    if (!user) {
+      throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
+    }
+
+    const secret = this.configService.get<string>('JWT_SECRET');
+    const token = jwt.sign({ id: user.id }, secret, { expiresIn: '1h' });
+
+    const resetLink = `http://localhost:3000/resetPassword?token=${token}`;
+
+    await this.sendResetEmail(user.email, resetLink);
+  }
+
+  private async sendResetEmail(email: string, resetLink: string): Promise<void> {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: this.configService.get<string>('GMAIL_USER'),
+        pass: this.configService.get<string>('GMAIL_PASS'),
+      },
+    });
+
+    const mailOptions = {
+      from: 'NetDesignChile@gmail.com',
+      to: email,
+      subject: 'Solicitud para restablecimiento de contraseña',
+      text: `Haga clic en el siguiente enlace para restablecer su contraseña: ${resetLink}`,
+    };
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (error) {
+      console.error('Error al enviar el correo de restablecimiento de contraseña:', error);
+      throw new HttpException('Error al enviar el correo de restablecimiento', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    let userId: number;
+    const secret = this.configService.get<string>('JWT_SECRET');
+  
+    try {
+      const decoded: any = jwt.verify(token, secret);
+      userId = decoded.id;
+    } catch (error) {
+      throw new HttpException('Token inválido o expirado', HttpStatus.UNAUTHORIZED);
+    }
+  
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
+    }
+  
+    user.password = await bcryptjs.hash(newPassword, 10);
+    await this.userRepository.save(user);
+  }
+
 }
