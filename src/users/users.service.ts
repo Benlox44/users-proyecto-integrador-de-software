@@ -37,14 +37,42 @@ export class UsersService implements OnModuleInit {
     }
   }
 
-  async addToOwned(token: string, courseId: number) {
+  async getPurchaseDetails(userId: number) {
+    const purchases = await this.ownedRepository.find({ where: { user_id: userId } });
+  
+    if (!purchases || purchases.length === 0) {
+      return [];
+    }
+  
+    const groupedOrders = purchases.reduce((acc, purchase) => {
+      const { order_id, course_id, price } = purchase;
+  
+      if (!acc[order_id]) {
+        acc[order_id] = { 
+          order_id, 
+          total_price: 0, 
+          courses: [] 
+        };
+      }
+  
+      acc[order_id].total_price += price;
+      acc[order_id].courses.push({ course_id, price });
+  
+      return acc;
+    }, {});
+  
+    return Object.values(groupedOrders);
+  }
+
+  async addToOwned(token: string, courseId: number,  orderId: number , coursePrice: number ) {
     const userId = this.extractUserIdFromToken(token);
     const existingEntry = await this.ownedRepository.findOne({ where: { user_id: userId, course_id: courseId } });
+    
     if (existingEntry) {
       throw new HttpException('El curso ya ha sido comprado', HttpStatus.CONFLICT);
     }
 
-    const ownedEntry = this.ownedRepository.create({ user_id: userId, course_id: courseId });
+    const ownedEntry = this.ownedRepository.create({ user_id: userId, course_id: courseId, order_id : orderId ,price: coursePrice[0] });
     await this.ownedRepository.save(ownedEntry);
   }
 
@@ -81,12 +109,18 @@ export class UsersService implements OnModuleInit {
 
         channel.consume(queue, async (msg) => {
           if (msg) {
-            const { userId, courseIds } = JSON.parse(msg.content.toString());
-            console.log('Recibido mensaje de compra:', { userId, courseIds });
+            const { userId, courseIds, orderId, coursePrices } = JSON.parse(msg.content.toString());
+            console.log('Recibido mensaje de compra:', { userId, courseIds, orderId, coursePrices });
 
             try {
-              for (const courseId of courseIds) {
-                await this.ownedRepository.save({ user_id: userId, course_id: courseId });
+              for (const [index, courseId] of courseIds.entries()) {
+                const coursePrice = coursePrices[index];
+                await this.ownedRepository.save({
+                  user_id: userId,
+                  course_id: courseId,
+                  order_id: orderId,
+                  price: coursePrice, 
+                });
               }
 
               await this.cartRepository.delete({ user_id: userId });

@@ -7,4 +7,11 @@ export class Owned {
 
   @PrimaryColumn()
   course_id: number;
+
+  @Column()
+  order_id: number;
+
+  @Column('float')
+  price: number;
+
 }

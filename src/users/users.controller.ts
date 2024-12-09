@@ -84,7 +84,7 @@ async removeFromCart(@Request() req, @Body() body) {
   @Post('add-to-owned')
   async addToOwned(@Request() req, @Body() body) {
     const userId = req.user.id;
-    return this.usersService.addToOwned(userId, body.courseId);
+    return this.usersService.addToOwned(userId, body.courseId, body.orderId, body.coursePrices );
   }
 
   @UseGuards(AuthGuard)
@@ -100,6 +100,24 @@ async removeFromCart(@Request() req, @Body() body) {
       return ownedCourses;
     } catch (error) {
       console.error(`Error al obtener los cursos comprados para el usuario ${userId}:`, error.message);
+      throw new HttpException(error.message, error.status || HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+
+  @UseGuards(AuthGuard)
+  @Get('purchases')
+  async getPurchases(@Request() req) {
+    const userId = req.user.id;
+
+    console.log(`Solicitud para obtener detalles de compras del usuario ${userId}`);
+    
+    try {
+      const purchases = await this.usersService.getPurchaseDetails(userId);
+      console.log(`Detalles de compras para el usuario ${userId}:`, purchases);
+      return purchases;
+    } catch (error) {
+      console.error(`Error al obtener los detalles de compras para el usuario ${userId}:`, error.message);
       throw new HttpException(error.message, error.status || HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
